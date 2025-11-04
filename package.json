@@ -1,0 +1,60 @@
+{
+  "name": "coda-md-export",
+  "version": "0.1.0",
+  "description": "Chrome extension to export Coda pages as Markdown",
+  "author": "Coda Markdown Export Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/coda-md-export.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/coda-md-export/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/coda-md-export#readme",
+  "keywords": [
+    "coda",
+    "markdown",
+    "export",
+    "chrome-extension",
+    "browser-extension"
+  ],
+  "scripts": {
+    "build": "npm run clean && npm run build:extension",
+    "build:extension": "webpack --config webpack.config.js",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "test:unit": "jest --testPathPattern=unit",
+    "test:integration": "jest --testPathPattern=integration",
+    "test:e2e": "jest --testPathPattern=e2e",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src tests --ext .ts,.tsx",
+    "lint:fix": "eslint src tests --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,json,html,css}\" \"tests/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,json,html,css}\" \"tests/**/*.{ts,tsx}\""
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.6",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "copy-webpack-plugin": "^12.0.2",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "prettier": "^3.6.2",
+    "ts-jest": "^29.1.1",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}
