@@ -305,6 +305,17 @@
           <div class="alert alert-info">
             <strong id="export-progress-title">Exporting...</strong><br />
             <span id="export-progress-message" style="font-size: 12px"></span>
+            
+            <!-- Progress Bar -->
+            <div id="export-progress-bar-container" style="margin-top: 12px; display: none;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span id="export-progress-text" style="font-size: 11px; font-weight: 500; color: #374151;">0%</span>
+                <span id="export-progress-pages" style="font-size: 11px; color: #6b7280;">0 / 0 pages</span>
+              </div>
+              <div style="width: 100%; height: 8px; background-color: #e5e7eb; border-radius: 4px; overflow: hidden;">
+                <div id="export-progress-bar" style="width: 0%; height: 100%; background-color: #3b82f6; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
           </div>
         </div>
 

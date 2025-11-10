@@ -131,8 +131,29 @@ export class NestedExportService {
     for (const [, pagesAtDepth] of Array.from(pagesByDepth.entries()).sort(
       ([a], [b]) => a - b
     )) {
-      // Export all pages at this depth in parallel
-      const exportPromises = pagesAtDepth.map(async (page) => {
+      // Export pages with limited concurrency (max 3 at a time)
+      await this.exportPagesInBatches(pagesAtDepth, 3, successful, failed);
+      
+      totalProcessed += pagesAtDepth.length;
+      onProgress?.(totalProcessed);
+    }
+
+    return { successful, failed };
+  }
+
+  /**
+   * Export pages in batches to limit concurrency
+   */
+  private async exportPagesInBatches(
+    pages: PageHierarchyNode[],
+    batchSize: number,
+    successful: Map<string, string>,
+    failed: FailedPageExport[]
+  ): Promise<void> {
+    for (let i = 0; i < pages.length; i += batchSize) {
+      const batch = pages.slice(i, i + batchSize);
+      
+      const exportPromises = batch.map(async (page) => {
         try {
           const content = await this.exportSinglePage(page);
           successful.set(page.pageId, content);
@@ -147,12 +168,9 @@ export class NestedExportService {
         }
       });
 
+      // Wait for current batch to complete before starting next batch
       await Promise.all(exportPromises);
-      totalProcessed += pagesAtDepth.length;
-      onProgress?.(totalProcessed);
     }
-
-    return { successful, failed };
   }
 
   /**
@@ -164,52 +182,99 @@ export class NestedExportService {
       throw new Error('API key not configured');
     }
 
-    // Begin export
-    const exportResponse = await this.apiClient.beginPageExport(
-      config.apiKey,
-      page.docId,
-      page.pageId,
-      { outputFormat: 'markdown' }
+    // Begin export with retry
+    const exportResponse = await this.retryOperation(
+      () =>
+        this.apiClient.beginPageExport(config.apiKey!, page.docId, page.pageId, {
+          outputFormat: 'markdown',
+        }),
+      3,
+      1000
     );
 
-    // Wait a bit before polling
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait 3 seconds before polling (Coda API needs time to register export)
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // Poll for completion
     let attempts = 0;
     const maxAttempts = 60;
+    const pollInterval = 2000;
+
     while (attempts < maxAttempts) {
       attempts++;
-      const status = await this.apiClient.getExportStatus(
-        config.apiKey,
-        page.docId,
-        page.pageId,
-        exportResponse.id
-      );
 
-      if (status.status === 'complete') {
-        if (!status.downloadLink) {
-          throw new Error('Export completed but no download link provided');
+      try {
+        const status = await this.apiClient.getExportStatus(
+          config.apiKey!,
+          page.docId,
+          page.pageId,
+          exportResponse.id
+        );
+
+        if (status.status === 'complete') {
+          if (!status.downloadLink) {
+            throw new Error('Export completed but no download link provided');
+          }
+
+          // Fetch content with retry
+          const content = await this.retryOperation(async () => {
+            const response = await fetch(status.downloadLink!);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch content: ${response.status}`);
+            }
+            return await response.text();
+          }, 3, 1000);
+
+          return content;
         }
 
-        // Fetch content
-        const response = await fetch(status.downloadLink);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch content: ${response.status}`);
+        if (status.status === 'failed') {
+          throw new Error(status.error || 'Export failed');
         }
 
-        return await response.text();
+        // Still in progress, wait before next poll
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      } catch (error) {
+        // If this is the last attempt, throw the error
+        if (attempts >= maxAttempts) {
+          throw error;
+        }
+        // Otherwise, wait and retry
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
       }
-
-      if (status.status === 'failed') {
-        throw new Error(status.error || 'Export failed');
-      }
-
-      // Still in progress, wait before next poll
-      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    throw new Error('Export timed out');
+    throw new Error(`Export timed out after ${maxAttempts} attempts`);
+  }
+
+  /**
+   * Retry an operation with exponential backoff
+   */
+  private async retryOperation<T>(
+    operation: () => Promise<T>,
+    maxRetries: number,
+    baseDelay: number
+  ): Promise<T> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Don't retry on last attempt
+        if (attempt === maxRetries) {
+          break;
+        }
+
+        // Exponential backoff: delay = baseDelay * 2^attempt
+        const delay = baseDelay * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError || new Error('Operation failed after retries');
   }
 
   /**

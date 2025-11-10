@@ -170,7 +170,7 @@ describe('NestedExportService', () => {
       expect(result.combinedContent).toContain('Child Content');
       expect(result.combinedContent).toContain('Page: Root');
       expect(result.combinedContent).toContain('Page: Child');
-    });
+    }, 15000); // Increased timeout due to 3s wait per export
 
     it('should handle partial failures gracefully', async () => {
       mockStorage.getConfiguration.mockResolvedValue({
@@ -214,14 +214,15 @@ describe('NestedExportService', () => {
         .mockResolvedValueOnce(mockRootPage)
         .mockResolvedValueOnce(mockChild);
 
-      // Root succeeds, child fails
+      // Root succeeds, child fails (with retries)
       mockApiClient.beginPageExport
         .mockResolvedValueOnce({
           id: 'export-root',
           status: 'inProgress',
           href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-root/export/export-root',
         })
-        .mockRejectedValueOnce(new Error('Export failed'));
+        // Child export will fail 4 times (initial + 3 retries)
+        .mockRejectedValue(new Error('Export failed'));
 
       mockApiClient.getExportStatus.mockResolvedValue({
         id: 'export-root',
@@ -247,7 +248,7 @@ describe('NestedExportService', () => {
       expect(result.failedPages[0]?.pageId).toBe('page-1');
       expect(result.combinedContent).toContain('Root Content');
       expect(result.error).toContain('1 pages failed to export');
-    });
+    }, 30000); // Increased timeout due to 3s wait per export and retry logic
 
     it('should handle discovery errors', async () => {
       mockStorage.getConfiguration.mockResolvedValue({

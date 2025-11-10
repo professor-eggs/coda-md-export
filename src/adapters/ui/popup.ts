@@ -58,6 +58,10 @@ const copyButtonLoading = document.getElementById('copy-button-loading') as HTML
 const exportProgressSection = document.getElementById('export-progress-section') as HTMLDivElement;
 const exportProgressTitle = document.getElementById('export-progress-title') as HTMLElement;
 const exportProgressMessage = document.getElementById('export-progress-message') as HTMLSpanElement;
+const exportProgressBarContainer = document.getElementById('export-progress-bar-container') as HTMLDivElement;
+const exportProgressBar = document.getElementById('export-progress-bar') as HTMLDivElement;
+const exportProgressText = document.getElementById('export-progress-text') as HTMLSpanElement;
+const exportProgressPages = document.getElementById('export-progress-pages') as HTMLSpanElement;
 
 // Nested export DOM elements
 const includeNestedCheckbox = document.getElementById('include-nested-checkbox') as HTMLInputElement;
@@ -166,6 +170,30 @@ async function updatePageInfo(): Promise<void> {
     }
     pageInfoNotDetected.classList.remove('hidden');
   }
+}
+
+/**
+ * Update progress bar
+ */
+function updateProgressBar(current: number, total: number): void {
+  if (total === 0) {
+    exportProgressBarContainer.style.display = 'none';
+    return;
+  }
+
+  exportProgressBarContainer.style.display = 'block';
+  const percentage = Math.round((current / total) * 100);
+  
+  exportProgressBar.style.width = `${percentage}%`;
+  exportProgressText.textContent = `${percentage}%`;
+  exportProgressPages.textContent = `${current} / ${total} pages`;
+}
+
+/**
+ * Hide progress bar
+ */
+function hideProgressBar(): void {
+  exportProgressBarContainer.style.display = 'none';
 }
 
 /**
@@ -296,6 +324,13 @@ async function handleCopy(): Promise<void> {
         (progress) => {
           exportProgressTitle.textContent = 'Exporting...';
           exportProgressMessage.textContent = progress.message;
+          
+          // Update progress bar if we have page counts
+          if (progress.totalPages && progress.pagesProcessed !== undefined) {
+            updateProgressBar(progress.pagesProcessed, progress.totalPages);
+          } else {
+            hideProgressBar();
+          }
         },
       );
 
@@ -308,6 +343,7 @@ async function handleCopy(): Promise<void> {
 
       await navigator.clipboard.writeText(result.combinedContent);
       showMessage('Markdown copied to clipboard!', 'success');
+      hideProgressBar();
       exportProgressSection.classList.add('hidden');
     } else {
       // Single page export
@@ -362,6 +398,13 @@ async function handleExport(): Promise<void> {
         (progress) => {
           exportProgressTitle.textContent = 'Exporting...';
           exportProgressMessage.textContent = progress.message;
+          
+          // Update progress bar if we have page counts
+          if (progress.totalPages && progress.pagesProcessed !== undefined) {
+            updateProgressBar(progress.pagesProcessed, progress.totalPages);
+          } else {
+            hideProgressBar();
+          }
         },
       );
 
@@ -387,6 +430,7 @@ async function handleExport(): Promise<void> {
       a.click();
       URL.revokeObjectURL(url);
 
+      hideProgressBar();
       exportProgressSection.classList.add('hidden');
     } else {
       // Single page export
