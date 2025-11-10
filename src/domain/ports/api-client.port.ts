@@ -9,6 +9,8 @@ import {
   BeginPageContentExportResponse,
   PageContentExportStatusResponse,
   ApiLink,
+  PageList,
+  Page,
 } from '../models/api.schema';
 
 export interface ApiClientPort {
@@ -21,6 +23,16 @@ export interface ApiClientPort {
    * Resolve a browser link to get resource metadata
    */
   resolveBrowserLink(apiKey: string, url: string): Promise<ApiLink>;
+
+  /**
+   * List all pages in a document
+   */
+  listPages(apiKey: string, docId: string): Promise<PageList>;
+
+  /**
+   * Get details about a specific page
+   */
+  getPage(apiKey: string, docId: string, pageId: string): Promise<Page>;
 
   /**
    * Begin a page content export

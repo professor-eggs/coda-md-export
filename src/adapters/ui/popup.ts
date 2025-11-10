@@ -5,18 +5,29 @@
 
 import { ChromeStorageAdapter } from '../storage/chrome-storage.adapter';
 import { CodaApiAdapter } from '../api/coda-api.adapter';
+import { BottleneckRateLimiterAdapter } from '../rate-limiter/bottleneck-rate-limiter.adapter';
 import { ConfigurationService } from '../../domain/services/configuration.service';
 import { PageDetectionService } from '../../domain/services/page-detection.service';
 import { ExportService } from '../../domain/services/export.service';
+import { PageHierarchyService } from '../../domain/services/page-hierarchy.service';
+import { NestedExportService } from '../../domain/services/nested-export.service';
 import { CodaPageIdentifier } from '../../domain/models/api.schema';
 import { ExportState } from '../../domain/models/export.schema';
+import {
+  NestedExportSettings,
+  NestedExportDepth,
+  PageCountResult,
+} from '../../domain/models/nested-export.schema';
 
 // Initialize adapters and services
 const storage = new ChromeStorageAdapter();
-const apiClient = new CodaApiAdapter();
+const rateLimiter = new BottleneckRateLimiterAdapter();
+const apiClient = new CodaApiAdapter(undefined, rateLimiter);
 const configService = new ConfigurationService(storage, apiClient);
 const pageDetectionService = new PageDetectionService(apiClient, storage);
 const exportService = new ExportService(apiClient, storage);
+const hierarchyService = new PageHierarchyService(apiClient, storage);
+const nestedExportService = new NestedExportService(apiClient, storage);
 
 // DOM elements
 const messageContainer = document.getElementById('message-container') as HTMLDivElement;
@@ -48,8 +59,20 @@ const exportProgressSection = document.getElementById('export-progress-section')
 const exportProgressTitle = document.getElementById('export-progress-title') as HTMLElement;
 const exportProgressMessage = document.getElementById('export-progress-message') as HTMLSpanElement;
 
-// Store current page info for export
+// Nested export DOM elements
+const includeNestedCheckbox = document.getElementById('include-nested-checkbox') as HTMLInputElement;
+const nestedSettings = document.getElementById('nested-settings') as HTMLDivElement;
+const depthSelector = document.getElementById('depth-selector') as HTMLSelectElement;
+const checkPagesButton = document.getElementById('check-pages-button') as HTMLButtonElement;
+const checkPagesText = document.getElementById('check-pages-text') as HTMLSpanElement;
+const checkPagesLoading = document.getElementById('check-pages-loading') as HTMLSpanElement;
+const pageCountDisplay = document.getElementById('page-count-display') as HTMLDivElement;
+const totalPagesCount = document.getElementById('total-pages-count') as HTMLSpanElement;
+const pagesByDepth = document.getElementById('pages-by-depth') as HTMLDivElement;
+
+// Store current page info and discovered hierarchy
 let currentPageInfo: CodaPageIdentifier | null = null;
+let currentPageCount: PageCountResult | null = null;
 
 /**
  * Show message to user
@@ -146,6 +169,108 @@ async function updatePageInfo(): Promise<void> {
 }
 
 /**
+ * Handle nested checkbox toggle
+ */
+function handleNestedCheckboxToggle(): void {
+  const isChecked = includeNestedCheckbox.checked;
+  if (isChecked) {
+    nestedSettings.classList.remove('hidden');
+  } else {
+    nestedSettings.classList.add('hidden');
+    pageCountDisplay.classList.add('hidden');
+    currentPageCount = null;
+  }
+
+  // Save settings
+  void saveNestedSettings();
+}
+
+/**
+ * Handle check pages button click
+ */
+async function handleCheckPages(): Promise<void> {
+  if (!currentPageInfo) {
+    showMessage('No page detected', 'error');
+    return;
+  }
+
+  checkPagesButton.disabled = true;
+  checkPagesText.classList.add('hidden');
+  checkPagesLoading.classList.remove('hidden');
+  exportButton.disabled = true;
+  copyButton.disabled = true;
+
+  try {
+    const settings = await getNestedSettings();
+    currentPageCount = await hierarchyService.discoverPages(currentPageInfo, settings.depth);
+
+    // Display results
+    totalPagesCount.textContent = String(currentPageCount.totalPages);
+    
+    // Show breakdown by depth
+    const depthBreakdown = Object.entries(currentPageCount.byDepth)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([depth, count]) => `Depth ${depth}: ${count} page${count !== 1 ? 's' : ''}`)
+      .join(', ');
+    pagesByDepth.textContent = depthBreakdown;
+
+    pageCountDisplay.classList.remove('hidden');
+    showMessage(`Found ${currentPageCount.totalPages} pages to export`, 'success');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    showMessage(`Failed to check pages: ${errorMessage}`, 'error');
+  } finally {
+    checkPagesButton.disabled = false;
+    checkPagesText.classList.remove('hidden');
+    checkPagesLoading.classList.add('hidden');
+    exportButton.disabled = false;
+    copyButton.disabled = false;
+  }
+}
+
+/**
+ * Get current nested export settings
+ */
+async function getNestedSettings(): Promise<NestedExportSettings> {
+  const depthValue = depthSelector.value;
+  const depth: NestedExportDepth = depthValue === 'unlimited' ? 'unlimited' : Number(depthValue);
+
+  return {
+    includeNested: includeNestedCheckbox.checked,
+    depth,
+  };
+}
+
+/**
+ * Save nested settings to storage
+ */
+async function saveNestedSettings(): Promise<void> {
+  try {
+    const settings = await getNestedSettings();
+    await storage.saveNestedExportSettings(settings);
+  } catch (error) {
+    console.error('Failed to save nested settings:', error);
+  }
+}
+
+/**
+ * Load nested settings from storage
+ */
+async function loadNestedSettings(): Promise<void> {
+  try {
+    const settings = await storage.getNestedExportSettings();
+    includeNestedCheckbox.checked = settings.includeNested;
+    depthSelector.value = String(settings.depth);
+
+    if (settings.includeNested) {
+      nestedSettings.classList.remove('hidden');
+    }
+  } catch (error) {
+    console.error('Failed to load nested settings:', error);
+  }
+}
+
+/**
  * Handle copy button click
  */
 async function handleCopy(): Promise<void> {
@@ -155,22 +280,50 @@ async function handleCopy(): Promise<void> {
   }
 
   setCopyLoading(true);
+  checkPagesButton.disabled = true;
+  exportButton.disabled = true;
   exportProgressSection.classList.remove('hidden');
   messageContainer.innerHTML = '';
 
   try {
-    const result = await exportService.exportToClipboard(currentPageInfo, (progress) => {
-      // Update progress UI
-      exportProgressTitle.textContent = getProgressTitle(progress.state);
-      exportProgressMessage.textContent = progress.message;
-    });
+    const settings = await getNestedSettings();
 
-    if (result.success) {
+    if (settings.includeNested) {
+      // Use nested export service
+      const result = await nestedExportService.exportNestedPages(
+        currentPageInfo,
+        settings,
+        (progress) => {
+          exportProgressTitle.textContent = 'Exporting...';
+          exportProgressMessage.textContent = progress.message;
+        },
+      );
+
+      if (result.failedPages.length > 0) {
+        const failedList = result.failedPages
+          .map((f) => `- ${f.pageId}: ${f.error}`)
+          .join('\n');
+        console.warn(`Some pages failed to export:\n${failedList}`);
+      }
+
+      await navigator.clipboard.writeText(result.combinedContent);
       showMessage('Markdown copied to clipboard!', 'success');
       exportProgressSection.classList.add('hidden');
     } else {
-      showMessage(`Copy failed: ${result.error ?? 'Unknown error'}`, 'error');
-      exportProgressSection.classList.add('hidden');
+      // Single page export
+      const result = await exportService.exportToClipboard(currentPageInfo, (progress) => {
+        // Update progress UI
+        exportProgressTitle.textContent = getProgressTitle(progress.state);
+        exportProgressMessage.textContent = progress.message;
+      });
+
+      if (result.success) {
+        showMessage('Markdown copied to clipboard!', 'success');
+        exportProgressSection.classList.add('hidden');
+      } else {
+        showMessage(`Copy failed: ${result.error ?? 'Unknown error'}`, 'error');
+        exportProgressSection.classList.add('hidden');
+      }
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -178,6 +331,8 @@ async function handleCopy(): Promise<void> {
     exportProgressSection.classList.add('hidden');
   } finally {
     setCopyLoading(false);
+    checkPagesButton.disabled = false;
+    exportButton.disabled = false;
   }
 }
 
@@ -191,22 +346,63 @@ async function handleExport(): Promise<void> {
   }
 
   setExportLoading(true);
+  checkPagesButton.disabled = true;
+  copyButton.disabled = true;
   exportProgressSection.classList.remove('hidden');
   messageContainer.innerHTML = '';
 
   try {
-    const result = await exportService.exportPage(currentPageInfo, (progress) => {
-      // Update progress UI
-      exportProgressTitle.textContent = getProgressTitle(progress.state);
-      exportProgressMessage.textContent = progress.message;
-    });
+    const settings = await getNestedSettings();
 
-    if (result.success) {
-      showMessage(`File downloaded: ${result.fileName}`, 'success');
+    if (settings.includeNested) {
+      // Use nested export service
+      const result = await nestedExportService.exportNestedPages(
+        currentPageInfo,
+        settings,
+        (progress) => {
+          exportProgressTitle.textContent = 'Exporting...';
+          exportProgressMessage.textContent = progress.message;
+        },
+      );
+
+      if (result.failedPages.length > 0) {
+        const failedList = result.failedPages
+          .map((f) => `- ${f.pageId}: ${f.error}`)
+          .join('\n');
+        console.warn(`Some pages failed to export:\n${failedList}`);
+        showMessage(
+          `Export complete with ${result.failedPages.length} failed page(s). Check console for details.`,
+          'info',
+        );
+      } else {
+        showMessage(`File downloaded: ${currentPageInfo.pageId}.md`, 'success');
+      }
+
+      // Download the file
+      const blob = new Blob([result.combinedContent], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentPageInfo.pageId}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+
       exportProgressSection.classList.add('hidden');
     } else {
-      showMessage(`Export failed: ${result.error ?? 'Unknown error'}`, 'error');
-      exportProgressSection.classList.add('hidden');
+      // Single page export
+      const result = await exportService.exportPage(currentPageInfo, (progress) => {
+        // Update progress UI
+        exportProgressTitle.textContent = getProgressTitle(progress.state);
+        exportProgressMessage.textContent = progress.message;
+      });
+
+      if (result.success) {
+        showMessage(`File downloaded: ${result.fileName}`, 'success');
+        exportProgressSection.classList.add('hidden');
+      } else {
+        showMessage(`Export failed: ${result.error ?? 'Unknown error'}`, 'error');
+        exportProgressSection.classList.add('hidden');
+      }
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -214,6 +410,8 @@ async function handleExport(): Promise<void> {
     exportProgressSection.classList.add('hidden');
   } finally {
     setExportLoading(false);
+    checkPagesButton.disabled = false;
+    copyButton.disabled = false;
   }
 }
 
@@ -350,4 +548,23 @@ document.addEventListener('DOMContentLoaded', () => {
       void handleSave();
     }
   });
+
+  // Nested export event listeners
+  includeNestedCheckbox.addEventListener('change', () => {
+    handleNestedCheckboxToggle();
+  });
+
+  depthSelector.addEventListener('change', () => {
+    void saveNestedSettings();
+    // Reset page count when depth changes
+    pageCountDisplay.classList.add('hidden');
+    currentPageCount = null;
+  });
+
+  checkPagesButton.addEventListener('click', () => {
+    void handleCheckPages();
+  });
+
+  // Load nested settings
+  void loadNestedSettings();
 });

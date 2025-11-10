@@ -33,11 +33,15 @@ describe('ConfigurationService', () => {
       saveApiKey: jest.fn(),
       clearApiKey: jest.fn(),
       hasApiKey: jest.fn(),
+      getNestedExportSettings: jest.fn(),
+      saveNestedExportSettings: jest.fn(),
     };
 
     mockApiClient = {
       whoami: jest.fn(),
       resolveBrowserLink: jest.fn(),
+      listPages: jest.fn(),
+      getPage: jest.fn(),
       beginPageExport: jest.fn(),
       getExportStatus: jest.fn(),
       downloadExport: jest.fn(),

@@ -4,6 +4,7 @@
  */
 
 import { Configuration } from '../models/configuration.schema';
+import { NestedExportSettings } from '../models/nested-export.schema';
 
 export interface StoragePort {
   /**
@@ -25,4 +26,14 @@ export interface StoragePort {
    * Check if an API key is configured
    */
   hasApiKey(): Promise<boolean>;
+
+  /**
+   * Get nested export settings
+   */
+  getNestedExportSettings(): Promise<NestedExportSettings>;
+
+  /**
+   * Save nested export settings
+   */
+  saveNestedExportSettings(settings: NestedExportSettings): Promise<void>;
 }

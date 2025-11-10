@@ -161,4 +161,125 @@ describe('ChromeStorageAdapter', () => {
       expect(hasKey).toBe(false);
     });
   });
+
+  describe('getNestedExportSettings', () => {
+    it('should return default settings when no data exists', async () => {
+      mockStorage.local.get.mockResolvedValue({});
+
+      const settings = await adapter.getNestedExportSettings();
+
+      expect(settings).toEqual({
+        includeNested: false,
+        depth: 1,
+      });
+      expect(mockStorage.local.get).toHaveBeenCalledWith('coda-md-export-nested-settings');
+    });
+
+    it('should return saved settings when valid data exists', async () => {
+      const storedSettings = {
+        includeNested: true,
+        depth: 3,
+      };
+      mockStorage.local.get.mockResolvedValue({
+        'coda-md-export-nested-settings': storedSettings,
+      });
+
+      const settings = await adapter.getNestedExportSettings();
+
+      expect(settings).toEqual(storedSettings);
+    });
+
+    it('should return default settings when stored data is invalid', async () => {
+      mockStorage.local.get.mockResolvedValue({
+        'coda-md-export-nested-settings': { invalid: 'data' },
+      });
+
+      const settings = await adapter.getNestedExportSettings();
+
+      expect(settings).toEqual({
+        includeNested: false,
+        depth: 1,
+      });
+    });
+
+    it('should handle storage errors gracefully', async () => {
+      mockStorage.local.get.mockRejectedValue(new Error('Storage error'));
+
+      const settings = await adapter.getNestedExportSettings();
+
+      expect(settings).toEqual({
+        includeNested: false,
+        depth: 1,
+      });
+    });
+
+    it('should handle unlimited depth', async () => {
+      const storedSettings = {
+        includeNested: true,
+        depth: 'unlimited',
+      };
+      mockStorage.local.get.mockResolvedValue({
+        'coda-md-export-nested-settings': storedSettings,
+      });
+
+      const settings = await adapter.getNestedExportSettings();
+
+      expect(settings).toEqual(storedSettings);
+    });
+  });
+
+  describe('saveNestedExportSettings', () => {
+    it('should save valid settings', async () => {
+      mockStorage.local.set.mockResolvedValue(undefined);
+
+      await adapter.saveNestedExportSettings({
+        includeNested: true,
+        depth: 2,
+      });
+
+      expect(mockStorage.local.set).toHaveBeenCalledWith({
+        'coda-md-export-nested-settings': {
+          includeNested: true,
+          depth: 2,
+        },
+      });
+    });
+
+    it('should save unlimited depth', async () => {
+      mockStorage.local.set.mockResolvedValue(undefined);
+
+      await adapter.saveNestedExportSettings({
+        includeNested: true,
+        depth: 'unlimited',
+      });
+
+      expect(mockStorage.local.set).toHaveBeenCalledWith({
+        'coda-md-export-nested-settings': {
+          includeNested: true,
+          depth: 'unlimited',
+        },
+      });
+    });
+
+    it('should reject invalid settings', async () => {
+      await expect(
+        adapter.saveNestedExportSettings({
+          includeNested: 'not a boolean' as unknown as boolean,
+          depth: 1,
+        }),
+      ).rejects.toThrow();
+      expect(mockStorage.local.set).not.toHaveBeenCalled();
+    });
+
+    it('should propagate storage errors', async () => {
+      mockStorage.local.set.mockRejectedValue(new Error('Storage error'));
+
+      await expect(
+        adapter.saveNestedExportSettings({
+          includeNested: true,
+          depth: 2,
+        }),
+      ).rejects.toThrow('Storage error');
+    });
+  });
 });

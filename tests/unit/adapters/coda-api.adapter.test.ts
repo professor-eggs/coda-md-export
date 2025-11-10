@@ -260,4 +260,182 @@ describe('CodaApiAdapter', () => {
       ).rejects.toThrow('Failed to download export');
     });
   });
+
+  describe('listPages', () => {
+    it('should successfully list pages in a document', async () => {
+      const mockPageList = {
+        items: [
+          {
+            id: 'page-1',
+            type: 'page',
+            href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-1',
+            name: 'Page 1',
+            browserLink: 'https://coda.io/d/doc-123/_spage1',
+          },
+          {
+            id: 'page-2',
+            type: 'page',
+            href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-2',
+            name: 'Page 2',
+            browserLink: 'https://coda.io/d/doc-123/_spage2',
+          },
+        ],
+        href: 'https://coda.io/apis/v1/docs/doc-123/pages',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockPageList,
+      });
+
+      const result = await adapter.listPages('test-api-key', 'doc-123');
+
+      expect(result).toEqual(mockPageList);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://coda.io/apis/v1/docs/doc-123/pages',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-api-key',
+          }),
+        })
+      );
+    });
+
+    it('should handle URL encoding for doc ID', async () => {
+      const mockPageList = {
+        items: [],
+        href: 'https://coda.io/apis/v1/docs/My-Doc_d123/pages',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockPageList,
+      });
+
+      await adapter.listPages('test-api-key', 'My-Doc_d123');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://coda.io/apis/v1/docs/My-Doc_d123/pages',
+        expect.any(Object)
+      );
+    });
+
+    it('should throw CodaApiError on API error', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => ({
+          statusCode: 404,
+          statusMessage: 'Not Found',
+          message: 'Document not found',
+        }),
+      });
+
+      await expect(adapter.listPages('test-api-key', 'invalid-doc')).rejects.toThrow(
+        CodaApiError
+      );
+    });
+  });
+
+  describe('getPage', () => {
+    it('should successfully get page details', async () => {
+      const mockPage = {
+        id: 'page-1',
+        type: 'page',
+        href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-1',
+        name: 'My Page',
+        browserLink: 'https://coda.io/d/doc-123/_spage1',
+        contentType: 'canvas',
+        isHidden: false,
+        isEffectivelyHidden: false,
+        parent: {
+          id: 'page-0',
+          type: 'page',
+          href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-0',
+          name: 'Parent Page',
+        },
+        children: [
+          {
+            id: 'page-1-1',
+            type: 'page',
+            href: 'https://coda.io/apis/v1/docs/doc-123/pages/page-1-1',
+            name: 'Child Page',
+            browserLink: 'https://coda.io/d/doc-123/_spage11',
+          },
+        ],
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockPage,
+      });
+
+      const result = await adapter.getPage('test-api-key', 'doc-123', 'page-1');
+
+      expect(result).toEqual(mockPage);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://coda.io/apis/v1/docs/doc-123/pages/page-1',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-api-key',
+          }),
+        })
+      );
+    });
+
+    it('should handle URL encoding for page ID', async () => {
+      const mockPage = {
+        id: 'canvas-abc',
+        type: 'page',
+        href: 'https://coda.io/apis/v1/docs/doc-123/pages/canvas-abc',
+        name: 'My Page',
+        browserLink: 'https://coda.io/d/doc-123/_sabc',
+        contentType: 'canvas',
+        isHidden: false,
+        isEffectivelyHidden: false,
+        children: [],
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockPage,
+      });
+
+      await adapter.getPage('test-api-key', 'doc-123', 'canvas-abc');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://coda.io/apis/v1/docs/doc-123/pages/canvas-abc',
+        expect.any(Object)
+      );
+    });
+
+    it('should throw CodaApiError on API error', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: async () => ({
+          statusCode: 404,
+          statusMessage: 'Not Found',
+          message: 'Page not found',
+        }),
+      });
+
+      await expect(adapter.getPage('test-api-key', 'doc-123', 'invalid-page')).rejects.toThrow(
+        CodaApiError
+      );
+    });
+
+    it('should validate response schema', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ invalid: 'data' }),
+      });
+
+      await expect(adapter.getPage('test-api-key', 'doc-123', 'page-1')).rejects.toThrow();
+    });
+  });
 });

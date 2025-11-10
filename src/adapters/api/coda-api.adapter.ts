@@ -3,11 +3,16 @@
  */
 
 import { ApiClientPort } from '../../domain/ports/api-client.port';
+import { RateLimiterPort } from '../../domain/ports/rate-limiter.port';
 import {
   User,
   UserSchema,
   ApiLink,
   ApiLinkSchema,
+  PageList,
+  PageListSchema,
+  Page,
+  PageSchema,
   BeginPageContentExportRequest,
   BeginPageContentExportResponse,
   BeginPageContentExportResponseSchema,
@@ -31,9 +36,11 @@ export class CodaApiError extends Error {
 
 export class CodaApiAdapter implements ApiClientPort {
   private readonly baseUrl: string;
+  private readonly rateLimiter?: RateLimiterPort;
 
-  constructor(baseUrl: string = BASE_URL) {
+  constructor(baseUrl: string = BASE_URL, rateLimiter?: RateLimiterPort) {
     this.baseUrl = baseUrl;
+    this.rateLimiter = rateLimiter;
   }
 
   async whoami(apiKey: string): Promise<User> {
@@ -56,23 +63,73 @@ export class CodaApiAdapter implements ApiClientPort {
   }
 
   async resolveBrowserLink(apiKey: string, url: string): Promise<ApiLink> {
-    const encodedUrl = encodeURIComponent(url);
-    const apiUrl = `${this.baseUrl}/resolveBrowserLink?url=${encodedUrl}`;
+    const makeRequest = async () => {
+      const encodedUrl = encodeURIComponent(url);
+      const apiUrl = `${this.baseUrl}/resolveBrowserLink?url=${encodedUrl}`;
 
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok) {
-      await this.handleErrorResponse(response);
-    }
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
 
-    const data: unknown = await response.json();
-    return ApiLinkSchema.parse(data);
+      const data: unknown = await response.json();
+      return ApiLinkSchema.parse(data);
+    };
+
+    return this.rateLimiter ? this.rateLimiter.schedule('read', makeRequest) : makeRequest();
+  }
+
+  async listPages(apiKey: string, docId: string): Promise<PageList> {
+    const makeRequest = async () => {
+      const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
+
+      const data: unknown = await response.json();
+      return PageListSchema.parse(data);
+    };
+
+    return this.rateLimiter ? this.rateLimiter.schedule('read', makeRequest) : makeRequest();
+  }
+
+  async getPage(apiKey: string, docId: string, pageId: string): Promise<Page> {
+    const makeRequest = async () => {
+      const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages/${encodeURIComponent(pageId)}`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
+
+      const data: unknown = await response.json();
+      return PageSchema.parse(data);
+    };
+
+    return this.rateLimiter ? this.rateLimiter.schedule('read', makeRequest) : makeRequest();
   }
 
   async beginPageExport(
@@ -81,23 +138,27 @@ export class CodaApiAdapter implements ApiClientPort {
     pageId: string,
     request: BeginPageContentExportRequest
   ): Promise<BeginPageContentExportResponse> {
-    const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages/${encodeURIComponent(pageId)}/export`;
+    const makeRequest = async () => {
+      const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages/${encodeURIComponent(pageId)}/export`;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
 
-    if (!response.ok) {
-      await this.handleErrorResponse(response);
-    }
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
 
-    const data: unknown = await response.json();
-    return BeginPageContentExportResponseSchema.parse(data);
+      const data: unknown = await response.json();
+      return BeginPageContentExportResponseSchema.parse(data);
+    };
+
+    return this.rateLimiter ? this.rateLimiter.schedule('writeContent', makeRequest) : makeRequest();
   }
 
   async getExportStatus(
@@ -106,22 +167,26 @@ export class CodaApiAdapter implements ApiClientPort {
     pageId: string,
     requestId: string
   ): Promise<PageContentExportStatusResponse> {
-    const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages/${encodeURIComponent(pageId)}/export/${encodeURIComponent(requestId)}`;
+    const makeRequest = async () => {
+      const url = `${this.baseUrl}/docs/${encodeURIComponent(docId)}/pages/${encodeURIComponent(pageId)}/export/${encodeURIComponent(requestId)}`;
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok) {
-      await this.handleErrorResponse(response);
-    }
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
 
-    const data: unknown = await response.json();
-    return PageContentExportStatusResponseSchema.parse(data);
+      const data: unknown = await response.json();
+      return PageContentExportStatusResponseSchema.parse(data);
+    };
+
+    return this.rateLimiter ? this.rateLimiter.schedule('read', makeRequest) : makeRequest();
   }
 
   async downloadExport(downloadUrl: string): Promise<Blob> {

@@ -249,6 +249,39 @@
               <span id="page-doc-id" style="font-family: monospace; font-size: 12px"></span><br />
               <span id="page-page-id" style="font-family: monospace; font-size: 12px"></span>
             </div>
+
+            <!-- Nested Export Settings -->
+            <div style="margin-bottom: 12px; padding: 12px; background: #f9fafb; border-radius: 6px">
+              <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer">
+                <input type="checkbox" id="include-nested-checkbox" style="cursor: pointer" />
+                <span style="font-size: 14px; font-weight: 500">Include nested pages</span>
+              </label>
+
+              <div id="nested-settings" class="hidden" style="margin-left: 24px">
+                <label style="font-size: 13px; color: #6b7280; margin-bottom: 4px; display: block">
+                  Depth:
+                </label>
+                <select id="depth-selector" style="width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px">
+                  <option value="1">1 level</option>
+                  <option value="2">2 levels</option>
+                  <option value="3">3 levels</option>
+                  <option value="4">4 levels</option>
+                  <option value="5">5 levels</option>
+                  <option value="unlimited">Unlimited</option>
+                </select>
+
+                <button id="check-pages-button" style="width: 100%; margin-top: 8px; padding: 6px 12px; background: #6b7280; color: white; border: none; border-radius: 4px; font-size: 13px; cursor: pointer">
+                  <span id="check-pages-text">Check Pages</span>
+                  <span id="check-pages-loading" class="loading hidden" style="border-color: rgba(255,255,255,0.3); border-top-color: white"></span>
+                </button>
+
+                <div id="page-count-display" class="hidden" style="margin-top: 8px; padding: 8px; background: #dbeafe; border-radius: 4px; font-size: 13px; color: #1e40af">
+                  <strong>Found <span id="total-pages-count">0</span> pages</strong>
+                  <div id="pages-by-depth" style="font-size: 12px; margin-top: 4px; color: #3b82f6"></div>
+                </div>
+              </div>
+            </div>
+
             <div style="display: flex; gap: 8px">
               <button id="export-button" class="primary-button" style="flex: 1">
                 <span id="export-button-text">Download</span>

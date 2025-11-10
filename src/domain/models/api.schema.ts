@@ -144,3 +144,56 @@ export const ApiLinkSchema = z.object({
 });
 
 export type ApiLink = z.infer<typeof ApiLinkSchema>;
+
+/**
+ * Page reference (minimal page info used in lists and children arrays)
+ */
+export const PageReferenceSchema = z.object({
+  id: z.string(),
+  type: z.literal('page'),
+  href: z.string().url(),
+  name: z.string(),
+  browserLink: z.string().url().optional(),
+});
+
+export type PageReference = z.infer<typeof PageReferenceSchema>;
+
+/**
+ * Page content type
+ */
+export const PageTypeSchema = z.enum(['canvas', 'embed']);
+
+export type PageType = z.infer<typeof PageTypeSchema>;
+
+/**
+ * Full page details from GET /docs/{docId}/pages/{pageId}
+ */
+export const PageSchema = z.object({
+  id: z.string(),
+  type: z.literal('page'),
+  href: z.string().url(),
+  name: z.string(),
+  browserLink: z.string().url(),
+  subtitle: z.string().optional(),
+  contentType: PageTypeSchema,
+  isHidden: z.boolean(),
+  isEffectivelyHidden: z.boolean(),
+  parent: PageReferenceSchema.optional(),
+  children: z.array(PageReferenceSchema),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export type Page = z.infer<typeof PageSchema>;
+
+/**
+ * Response from GET /docs/{docId}/pages
+ */
+export const PageListSchema = z.object({
+  items: z.array(PageReferenceSchema),
+  href: z.string().url().optional(),
+  nextPageToken: z.string().optional(),
+  nextPageLink: z.string().url().optional(),
+});
+
+export type PageList = z.infer<typeof PageListSchema>;
