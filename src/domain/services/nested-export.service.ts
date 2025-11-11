@@ -17,6 +17,15 @@ import { PageHierarchyService } from './page-hierarchy.service';
 export class NestedExportService {
   private readonly hierarchyService: PageHierarchyService;
 
+  // Cache for export job IDs: pageId -> { exportId, submittedAt }
+  private readonly exportJobCache = new Map<string, { exportId: string; submittedAt: Date }>();
+
+  // Cache for completed content: pageId -> { content, fetchedAt, pageUpdatedAt }
+  private readonly contentCache = new Map<
+    string,
+    { content: string; fetchedAt: Date; pageUpdatedAt: Date | null }
+  >();
+
   constructor(
     private readonly apiClient: ApiClientPort,
     private readonly storage: StoragePort
@@ -122,6 +131,77 @@ export class NestedExportService {
   }
 
   /**
+   * Check if cached content is still valid based on page's updatedAt timestamp
+   */
+  private isCacheValid(pageId: string, pageUpdatedAt: Date | null): boolean {
+    const cached = this.contentCache.get(pageId);
+    if (!cached) {
+      return false;
+    }
+
+    // If page has been updated since we cached it, cache is stale
+    if (pageUpdatedAt && cached.pageUpdatedAt) {
+      return pageUpdatedAt <= cached.pageUpdatedAt;
+    }
+
+    // If we don't have update timestamps, consider cache valid for 5 minutes
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return cached.fetchedAt > fiveMinutesAgo;
+  }
+
+  /**
+   * Get cached content if valid
+   */
+  private getCachedContent(pageId: string, pageUpdatedAt: Date | null): string | null {
+    if (this.isCacheValid(pageId, pageUpdatedAt)) {
+      const cached = this.contentCache.get(pageId);
+      return cached?.content || null;
+    }
+    return null;
+  }
+
+  /**
+   * Store content in cache
+   */
+  private setCachedContent(pageId: string, content: string, pageUpdatedAt: Date | null): void {
+    this.contentCache.set(pageId, {
+      content,
+      fetchedAt: new Date(),
+      pageUpdatedAt,
+    });
+  }
+
+  /**
+   * Get cached export job ID
+   */
+  private getCachedJobId(pageId: string): string | null {
+    const cached = this.exportJobCache.get(pageId);
+    if (!cached) {
+      return null;
+    }
+
+    // Consider job ID cache valid for 10 minutes
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    if (cached.submittedAt < tenMinutesAgo) {
+      // Job is too old, probably expired
+      this.exportJobCache.delete(pageId);
+      return null;
+    }
+
+    return cached.exportId;
+  }
+
+  /**
+   * Store export job ID in cache
+   */
+  private setCachedJobId(pageId: string, exportId: string): void {
+    this.exportJobCache.set(pageId, {
+      exportId,
+      submittedAt: new Date(),
+    });
+  }
+
+  /**
    * Optimized export: Submit all jobs sequentially, then poll concurrently
    * This avoids overwhelming the API with 45+ concurrent exports at once
    */
@@ -141,18 +221,48 @@ export class NestedExportService {
     // Get flat list of all pages in hierarchy order
     const allPages = this.hierarchyService.getFlatPageList(hierarchy);
 
-    // Phase 1: Submit all export jobs sequentially (one at a time)
+    // Phase 1: Check cache and submit jobs as needed
     type ExportJob = {
       page: PageHierarchyNode;
       exportId: string;
+      pageUpdatedAt: Date | null;
     };
 
     const jobs: ExportJob[] = [];
     const failed: FailedPageExport[] = [];
+    const successful = new Map<string, string>();
     let submitted = 0;
 
     for (const page of allPages) {
       try {
+        // Get page details to check updatedAt timestamp
+        const pageDetails = await this.apiClient.getPage(config.apiKey!, page.docId, page.pageId);
+        const pageUpdatedAt = pageDetails.updatedAt ? new Date(pageDetails.updatedAt) : null;
+
+        // Check if we have cached content (and it's still valid)
+        const cachedContent = this.getCachedContent(page.pageId, pageUpdatedAt);
+        if (cachedContent) {
+          successful.set(page.pageId, cachedContent);
+          submitted++;
+          onProgress?.(submitted, submitted); // Already complete
+          continue;
+        }
+
+        // Check if we have a cached job ID
+        const cachedJobId = this.getCachedJobId(page.pageId);
+        if (cachedJobId) {
+          // We already submitted this job, just add to polling queue
+          jobs.push({
+            page,
+            exportId: cachedJobId,
+            pageUpdatedAt,
+          });
+          submitted++;
+          onProgress?.(submitted, 0);
+          continue;
+        }
+
+        // No cache, submit new export job
         const exportResponse = await this.retryOperation(
           () =>
             this.apiClient.beginPageExport(config.apiKey!, page.docId, page.pageId, {
@@ -162,9 +272,13 @@ export class NestedExportService {
           1000
         );
 
+        // Cache the job ID
+        this.setCachedJobId(page.pageId, exportResponse.id);
+
         jobs.push({
           page,
           exportId: exportResponse.id,
+          pageUpdatedAt,
         });
 
         submitted++;
@@ -184,16 +298,22 @@ export class NestedExportService {
     }
 
     // Wait 3 seconds before polling (API needs time to register all exports)
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // (Skip if we have no jobs to poll)
+    if (jobs.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
 
     // Phase 2: Poll all jobs concurrently (rate limiter handles throttling)
-    const successful = new Map<string, string>();
-    let completed = 0;
+    let completed = successful.size; // Start with cached results
 
     const pollPromises = jobs.map(async (job) => {
       try {
         const content = await this.pollAndFetchContent(config.apiKey!, job.page, job.exportId);
+
+        // Store in both successful map and cache
         successful.set(job.page.pageId, content);
+        this.setCachedContent(job.page.pageId, content, job.pageUpdatedAt);
+
         completed++;
         onProgress?.(submitted, completed);
       } catch (error) {

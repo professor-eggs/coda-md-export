@@ -131,6 +131,10 @@ describe('NestedExportService', () => {
       };
 
       mockApiClient.getPage
+        // First two calls are for hierarchy discovery
+        .mockResolvedValueOnce(mockRootPage)
+        .mockResolvedValueOnce(mockChild)
+        // Next two calls are during export for updatedAt check
         .mockResolvedValueOnce(mockRootPage)
         .mockResolvedValueOnce(mockChild);
 
@@ -211,6 +215,10 @@ describe('NestedExportService', () => {
       };
 
       mockApiClient.getPage
+        // First two calls are for hierarchy discovery
+        .mockResolvedValueOnce(mockRootPage)
+        .mockResolvedValueOnce(mockChild)
+        // Next two calls are during export for updatedAt check
         .mockResolvedValueOnce(mockRootPage)
         .mockResolvedValueOnce(mockChild);
 
