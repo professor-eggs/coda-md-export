@@ -1,6 +1,6 @@
 {
   "name": "coda-md-export",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Chrome extension to export Coda pages as Markdown",
   "author": "Coda Markdown Export Contributors",
   "license": "MIT",
@@ -20,9 +20,10 @@
     "browser-extension"
   ],
   "scripts": {
-    "build": "npm run clean && npm run build:extension",
+    "build": "npm run clean && npm run build:extension && npm run build:zip",
     "build:extension": "webpack --config webpack.config.js",
-    "clean": "rm -rf dist",
+    "build:zip": "cd dist && bestzip ../coda-md-export.zip * && cd ..",
+    "clean": "rm -rf dist coda-md-export.zip",
     "test": "jest",
     "test:unit": "jest --testPathPattern=unit",
     "test:integration": "jest --testPathPattern=integration",
@@ -41,6 +42,7 @@
     "@types/node": "^20.10.6",
     "@typescript-eslint/eslint-plugin": "^6.17.0",
     "@typescript-eslint/parser": "^6.17.0",
+    "bestzip": "^2.2.1",
     "copy-webpack-plugin": "^12.0.2",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^10.1.8",
