@@ -47,23 +47,33 @@ export class NestedExportService {
         totalPages: pageCount.totalPages,
       });
 
-      // Step 2: Export pages by depth level
+      // Step 2: Submit all export jobs sequentially, then poll concurrently
       onProgress?.({
         state: 'exporting',
-        message: 'Exporting pages...',
+        message: 'Submitting export jobs...',
         pagesProcessed: 0,
         totalPages: pageCount.totalPages,
       });
 
-      const exportResults = await this.exportPagesByDepth(
+      const exportResults = await this.exportAllPagesOptimized(
         pageCount.hierarchy,
-        (processed) => {
-          onProgress?.({
-            state: 'exporting',
-            message: `Exported ${processed} of ${pageCount.totalPages} pages`,
-            pagesProcessed: processed,
-            totalPages: pageCount.totalPages,
-          });
+        pageCount.totalPages,
+        (submitted, completed) => {
+          if (completed > 0) {
+            onProgress?.({
+              state: 'exporting',
+              message: `Completed ${completed} of ${pageCount.totalPages} pages`,
+              pagesProcessed: completed,
+              totalPages: pageCount.totalPages,
+            });
+          } else {
+            onProgress?.({
+              state: 'exporting',
+              message: `Requesting export ${submitted}/${pageCount.totalPages}...`,
+              pagesProcessed: submitted,
+              totalPages: pageCount.totalPages,
+            });
+          }
         }
       );
 
@@ -93,9 +103,10 @@ export class NestedExportService {
         successfulPages: exportResults.successful.size,
         failedPages: exportResults.failed,
         combinedContent,
-        error: exportResults.failed.length > 0
-          ? `${exportResults.failed.length} pages failed to export`
-          : undefined,
+        error:
+          exportResults.failed.length > 0
+            ? `${exportResults.failed.length} pages failed to export`
+            : undefined,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -111,91 +122,108 @@ export class NestedExportService {
   }
 
   /**
-   * Export pages level by level (depth-first)
+   * Optimized export: Submit all jobs sequentially, then poll concurrently
+   * This avoids overwhelming the API with 45+ concurrent exports at once
    */
-  private async exportPagesByDepth(
+  private async exportAllPagesOptimized(
     hierarchy: PageHierarchyNode,
-    onProgress?: (processed: number) => void
+    _totalPages: number,
+    onProgress?: (submitted: number, completed: number) => void
   ): Promise<{
     successful: Map<string, string>; // pageId -> content
     failed: FailedPageExport[];
   }> {
-    const successful = new Map<string, string>();
-    const failed: FailedPageExport[] = [];
-
-    // Group pages by depth
-    const pagesByDepth = this.hierarchyService.getPagesByDepth(hierarchy);
-
-    // Process each depth level sequentially
-    let totalProcessed = 0;
-    for (const [, pagesAtDepth] of Array.from(pagesByDepth.entries()).sort(
-      ([a], [b]) => a - b
-    )) {
-      // Export pages with limited concurrency (max 3 at a time)
-      await this.exportPagesInBatches(pagesAtDepth, 3, successful, failed);
-      
-      totalProcessed += pagesAtDepth.length;
-      onProgress?.(totalProcessed);
-    }
-
-    return { successful, failed };
-  }
-
-  /**
-   * Export pages in batches to limit concurrency
-   */
-  private async exportPagesInBatches(
-    pages: PageHierarchyNode[],
-    batchSize: number,
-    successful: Map<string, string>,
-    failed: FailedPageExport[]
-  ): Promise<void> {
-    for (let i = 0; i < pages.length; i += batchSize) {
-      const batch = pages.slice(i, i + batchSize);
-      
-      const exportPromises = batch.map(async (page) => {
-        try {
-          const content = await this.exportSinglePage(page);
-          successful.set(page.pageId, content);
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          failed.push({
-            pageId: page.pageId,
-            pageName: page.name,
-            path: page.path,
-            error: errorMessage,
-          });
-        }
-      });
-
-      // Wait for current batch to complete before starting next batch
-      await Promise.all(exportPromises);
-    }
-  }
-
-  /**
-   * Export a single page and return its content
-   */
-  private async exportSinglePage(page: PageHierarchyNode): Promise<string> {
     const config = await this.storage.getConfiguration();
     if (!config.isConfigured || !config.apiKey) {
       throw new Error('API key not configured');
     }
 
-    // Begin export with retry
-    const exportResponse = await this.retryOperation(
-      () =>
-        this.apiClient.beginPageExport(config.apiKey!, page.docId, page.pageId, {
-          outputFormat: 'markdown',
-        }),
-      3,
-      1000
-    );
+    // Get flat list of all pages in hierarchy order
+    const allPages = this.hierarchyService.getFlatPageList(hierarchy);
 
-    // Wait 3 seconds before polling (Coda API needs time to register export)
+    // Phase 1: Submit all export jobs sequentially (one at a time)
+    type ExportJob = {
+      page: PageHierarchyNode;
+      exportId: string;
+    };
+
+    const jobs: ExportJob[] = [];
+    const failed: FailedPageExport[] = [];
+    let submitted = 0;
+
+    for (const page of allPages) {
+      try {
+        const exportResponse = await this.retryOperation(
+          () =>
+            this.apiClient.beginPageExport(config.apiKey!, page.docId, page.pageId, {
+              outputFormat: 'markdown',
+            }),
+          3,
+          1000
+        );
+
+        jobs.push({
+          page,
+          exportId: exportResponse.id,
+        });
+
+        submitted++;
+        onProgress?.(submitted, 0);
+      } catch (error) {
+        // If we can't even submit the job, mark as failed immediately
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        failed.push({
+          pageId: page.pageId,
+          pageName: page.name,
+          path: page.path,
+          error: `Failed to submit: ${errorMessage}`,
+        });
+        submitted++;
+        onProgress?.(submitted, 0);
+      }
+    }
+
+    // Wait 3 seconds before polling (API needs time to register all exports)
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // Poll for completion
+    // Phase 2: Poll all jobs concurrently (rate limiter handles throttling)
+    const successful = new Map<string, string>();
+    let completed = 0;
+
+    const pollPromises = jobs.map(async (job) => {
+      try {
+        const content = await this.pollAndFetchContent(config.apiKey!, job.page, job.exportId);
+        successful.set(job.page.pageId, content);
+        completed++;
+        onProgress?.(submitted, completed);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        failed.push({
+          pageId: job.page.pageId,
+          pageName: job.page.name,
+          path: job.page.path,
+          error: errorMessage,
+        });
+        completed++;
+        onProgress?.(submitted, completed);
+      }
+    });
+
+    await Promise.all(pollPromises);
+
+    return { successful, failed };
+  }
+
+  /**
+   * Poll for export completion and fetch content
+   * Separated from submission for optimized concurrent polling
+   */
+  private async pollAndFetchContent(
+    apiKey: string,
+    page: PageHierarchyNode,
+    exportId: string
+  ): Promise<string> {
+    // Poll for completion (rate-limited automatically by bottleneck)
     let attempts = 0;
     const maxAttempts = 60;
     const pollInterval = 2000;
@@ -205,10 +233,10 @@ export class NestedExportService {
 
       try {
         const status = await this.apiClient.getExportStatus(
-          config.apiKey!,
+          apiKey,
           page.docId,
           page.pageId,
-          exportResponse.id
+          exportId
         );
 
         if (status.status === 'complete') {
@@ -217,13 +245,17 @@ export class NestedExportService {
           }
 
           // Fetch content with retry
-          const content = await this.retryOperation(async () => {
-            const response = await fetch(status.downloadLink!);
-            if (!response.ok) {
-              throw new Error(`Failed to fetch content: ${response.status}`);
-            }
-            return await response.text();
-          }, 3, 1000);
+          const content = await this.retryOperation(
+            async () => {
+              const response = await fetch(status.downloadLink!);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch content: ${response.status}`);
+              }
+              return await response.text();
+            },
+            3,
+            1000
+          );
 
           return content;
         }
@@ -291,7 +323,8 @@ export class NestedExportService {
       const content = exportedPages.get(node.pageId);
       if (content) {
         // Add separator with page info
-        const separator = `\n\n${'='.repeat(80)}\n` +
+        const separator =
+          `\n\n${'='.repeat(80)}\n` +
           `Page: ${node.name}\n` +
           `Path: ${node.path}\n` +
           `Depth: ${node.depth}\n` +
@@ -312,4 +345,3 @@ export class NestedExportService {
     return parts.join('');
   }
 }
-
