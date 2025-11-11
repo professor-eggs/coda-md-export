@@ -1,6 +1,6 @@
 {
   "name": "coda-md-export",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Chrome extension to export Coda pages as Markdown",
   "author": "Coda Markdown Export Contributors",
   "license": "MIT",

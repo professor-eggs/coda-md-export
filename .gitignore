@@ -31,3 +31,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 .cache/
+
+# Chrome Web Store publishing
+get-token.js
+*.pem
+*.crx
+extension.zip

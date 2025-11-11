@@ -9,7 +9,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
           client-id: ${{ secrets.CHROME_CLIENT_ID }}
           client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
           refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          publish: true # Set to false for draft upload only
+          publish: false
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -48,4 +48,3 @@ jobs:
           name: extension-build
           path: extension.zip
           retention-days: 30
-
